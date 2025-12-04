@@ -42,6 +42,50 @@ enum Status {
     EXPIRED,
 }
 
+// 这里定义了一个资源的struct
+// 这个简单的tab包含两个内容，当前tab索引和tab的名称
+#[derive(Resource, Default)]
+struct SimpleTabs {
+    current_tab: usize,
+    tab_names: Vec<&'static str>,
+}
+
+// fn simple_tab_ui(mut contexts: EguiContexts, mut tabs: ResMut<SimpleTabs>) {
+//     let ctx = contexts.ctx_mut().expect("REASON");
+
+//     let mut clicked_tab = None;
+
+//     egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+//         ui.horizontal(|ui| {
+//             for (i, &name) in tabs.tab_names.iter().enumerate() {
+//                 let selected = tabs.current_tab == i;
+//                 if ui.selectable_label(selected, name).clicked() {
+//                     clicked_tab = Some(i);
+//                 }
+//             }
+//         });
+//     });
+
+//     // 在UI作用域外修改资源
+//     if let Some(tab_index) = clicked_tab {
+//         tabs.current_tab = tab_index;
+//     }
+
+//     egui::CentralPanel::default().show(ctx, |ui| match tabs.current_tab {
+//         0 => ui.label("tab1 content"),
+//         1 => ui.label("tab2 content"),
+//         2 => ui.label("tab3 content"),
+//         _ => ui.label("other content"),
+//     });
+// }
+
+fn setup_tabs(mut commands: Commands) {
+    commands.insert_resource(SimpleTabs {
+        current_tab: 0,
+        tab_names: vec!["tab1", "tab2", "tab3"],
+    });
+}
+
 fn value_in_status(status: &u32) -> &str {
     match status {
         1 => "doing",
@@ -59,6 +103,8 @@ fn main() {
         .insert_resource(AppState::new())
         .insert_resource(FilterState::new())
         .add_systems(Startup, setup_camera_system)
+        .add_systems(Startup, setup_tabs)
+        // .add_systems(Update, simple_tab_ui)
         .add_systems(EguiPrimaryContextPass, ui_example_system)
         .run();
 }
@@ -159,6 +205,7 @@ fn ui_example_system(
     mut contexts: EguiContexts,
     app_state: Res<AppState>,
     mut filter_state: ResMut<FilterState>,
+    mut tabs: ResMut<SimpleTabs>,
 ) {
     // 处理 Result，如果出错则直接返回
     let ctx = match contexts.ctx_mut() {
@@ -171,51 +218,88 @@ fn ui_example_system(
     // sorted_items.sort_by_key(|item| item.duration);
     sorted_items.sort_by(|a, b| a.duration.cmp(&b.duration));
 
-    egui::Window::new("TestWindow").show(ctx, |ui| {
-        // 增加筛选
-        // let mut filter_state = world.resource_mut::<FilterState>();
-        let mut available_names: Vec<&str> =
-            sorted_items.iter().map(|item| item.name.as_str()).collect();
+    // 也不是非要使用window
+    // egui::Window::new("TestWindow").show(ctx, |ui| {
+    // });
 
-        available_names.sort();
-        available_names.dedup();
+    // tab
+    // let ctx = contexts.ctx_mut().expect("REASON");
+    let mut clicked_tab = None;
 
-        let mut filter_options = vec!["All"];
-        filter_options.extend(available_names);
-
-        egui::ComboBox::from_id_salt("name_filter")
-            .selected_text(&filter_state.selected_name)
-            .show_ui(ui, |ui| {
-                for &name in &filter_options {
-                    ui.selectable_value(&mut filter_state.selected_name, name.to_string(), name);
+    egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            for (i, &name) in tabs.tab_names.iter().enumerate() {
+                let selected = tabs.current_tab == i;
+                if ui.selectable_label(selected, name).clicked() {
+                    clicked_tab = Some(i);
                 }
-            });
-
-        // 循环内容
-        for item in sorted_items.iter() {
-            if filter_state.selected_name == "All" || item.name == filter_state.selected_name {
-                ui.horizontal(|ui| {
-                    ui.label(&item.name);
-                    ui.label(&item.title);
-                    // ui.label(&item.dead_time);
-                    ui.label(value_in_status(&item.status));
-                    // 使用预先计算好的持续时间
-                    let formatted_duration = format_duration(item.duration);
-                    ui.label(formatted_duration);
-                });
             }
+        });
+    });
+
+    // 在UI作用域外修改资源
+    if let Some(tab_index) = clicked_tab {
+        tabs.current_tab = tab_index;
+    }
+
+    egui::CentralPanel::default().show(ctx, |ui| match tabs.current_tab {
+        0 => {
+            let mut available_names: Vec<&str> =
+                sorted_items.iter().map(|item| item.name.as_str()).collect();
+
+            available_names.sort();
+            available_names.dedup();
+
+            let mut filter_options = vec!["All"];
+            filter_options.extend(available_names);
+
+            egui::ComboBox::from_id_salt("name_filter")
+                .selected_text(&filter_state.selected_name)
+                .show_ui(ui, |ui| {
+                    for &name in &filter_options {
+                        ui.selectable_value(
+                            &mut filter_state.selected_name,
+                            name.to_string(),
+                            name,
+                        );
+                    }
+                });
+
+            // 循环内容
+            for item in sorted_items.iter() {
+                if filter_state.selected_name == "All" || item.name == filter_state.selected_name {
+                    ui.horizontal(|ui| {
+                        ui.label(&item.name);
+                        ui.label(&item.title);
+                        // ui.label(&item.dead_time);
+                        ui.label(value_in_status(&item.status));
+                        // 使用预先计算好的持续时间
+                        let formatted_duration = format_duration(item.duration);
+                        ui.label(formatted_duration);
+                    });
+                }
+            }
+
+            ui.separator();
+            ui.label(format!(
+                "init: {}",
+                app_state.init_time.format("%Y-%m-%d %H:%M:%S")
+            ));
+
+            ui.label(format!(
+                "current: {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S")
+            ));
         }
-
-        ui.separator();
-        ui.label(format!(
-            "init: {}",
-            app_state.init_time.format("%Y-%m-%d %H:%M:%S")
-        ));
-
-        ui.label(format!(
-            "current: {}",
-            Local::now().format("%Y-%m-%d %H:%M:%S")
-        ));
+        1 => {
+            ui.label("tab2 content");
+        }
+        2 => {
+            ui.label("tab3 content");
+        }
+        _ => {
+            ui.label("other content");
+        }
     });
 }
 
@@ -223,7 +307,7 @@ fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.num_seconds();
 
     if total_seconds <= 0 {
-        return "已过期".to_string();
+        return "expired".to_string();
     }
 
     let days = total_seconds / (24 * 3600);
