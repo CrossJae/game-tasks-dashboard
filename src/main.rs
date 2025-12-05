@@ -1,8 +1,13 @@
 use bevy::prelude::*;
+use bevy::window::{WindowLevel, WindowResolution};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::sync::Arc;
+
+#[cfg(target_os = "macos")]
+use bevy::window::CompositeAlphaMode;
 // 存储应用状态的资源
 #[derive(Resource)]
 struct AppState {
@@ -69,15 +74,104 @@ fn value_in_status(status: &usize) -> &str {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(
+            (DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    // transparent: true,
+                    // decorations: false,
+                    resolution: WindowResolution::new(375, 500), // 设置窗口大小为 400x400
+                    // window_level: WindowLevel::AlwaysOnTop,
+                    // #[cfg(target_os = "macos")]
+                    // composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
+                    ..default()
+                }),
+                ..default()
+            })),
+        )
         .add_plugins(EguiPlugin::default())
         .insert_resource(AppState::new())
         .insert_resource(FilterState::new())
         .add_systems(Startup, setup_camera_system)
         .add_systems(Startup, setup_tabs)
+        .add_systems(Update, setup_chinese_font)
         // .add_systems(Update, simple_tab_ui)
         .add_systems(EguiPrimaryContextPass, ui_example_system)
         .run();
+}
+
+fn setup_chinese_font(
+    mut contexts: EguiContexts,
+    // mut has_setup: Local<bool>, // 这是一个局部状态，每个系统实例独享
+    mut has_setup: bevy::prelude::Local<bool>, // 使用明确路径
+) {
+    // 如果已经设置过，直接返回
+    if *has_setup {
+        return;
+    }
+    if let Ok(egui_ctx) = contexts.ctx_mut() {
+        let mut fonts = egui::FontDefinitions::default();
+        // 1. 创建 FontData
+        let font_data = egui::FontData::from_static(include_bytes!("../assets/fonts/PingFang.ttc"));
+
+        // 2. 使用 Arc::new 将其包装为 Arc<FontData>
+        fonts.font_data.insert(
+            "my_macos_font".to_owned(),
+            Arc::new(font_data), // 关键修改：包装成 Arc
+        );
+
+        // 3. 设置字体族（这部分不变）
+        // fonts
+        //     .families
+        //     .entry(egui::FontFamily::Proportional)
+        //     .or_default()
+        //     .insert(0, "my_macos_font".to_owned());
+
+        // fonts
+        //     .families
+        //     .entry(egui::FontFamily::Monospace)
+        //     .or_default()
+        //     .push("my_macos_font".to_owned());
+
+        // 尝试：完全替换比例字体族，而不是插入
+        fonts.families.insert(
+            egui::FontFamily::Proportional,
+            vec!["my_macos_font".to_owned()],
+        );
+        // 等宽字体族也可以同样处理
+        fonts.families.insert(
+            egui::FontFamily::Monospace,
+            vec!["my_macos_font".to_owned()],
+        );
+        println!(
+            "  1. 注册的字体数据键名: {:?}",
+            fonts.font_data.keys().collect::<Vec<_>>()
+        );
+        // println!(
+        //     "  2. 比例字体系列配置: {:?}",
+        //     fonts.families.get(&egui::FontFamily::Proportional)
+        // );
+        // println!(
+        //     "  3. 等宽字体系列配置: {:?}",
+        //     fonts.families.get(&egui::FontFamily::Monospace)
+        // );
+
+        // 4. 应用字体
+        egui_ctx.set_fonts(fonts);
+
+        // 调试：打印所有已注册的字体数据键名
+        // println!(
+        //     "当前已注册的字体键名: {:?}",
+        //     egui_ctx.fonts(|f| f.families().into_iter().cloned().collect::<Vec<_>>())
+        // );
+        // 可选：如果你还想查看字体系列的配置，可以添加这行
+        // println!(
+        //     "当前字体系列配置: {:?}",
+        //     egui_ctx.fonts(|f| f.definitions().families.clone())
+        // );
+
+        // 标记为已设置，下次这个系统被调用时会直接跳过
+        *has_setup = true;
+    }
 }
 
 fn load_items_from_json(file_path: &str) -> Vec<Item> {
@@ -118,7 +212,7 @@ impl AppState {
         let init_time = Local::now();
 
         // 读取本地json
-        let example = load_items_from_json("assets/json/items.json");
+        let example = load_items_from_json("assets/json/items_game.json");
 
         // 解析每个项目的 dead_time 并计算持续时间
         let items: Vec<Item> = example
@@ -144,6 +238,34 @@ impl AppState {
             .collect();
 
         Self { init_time, items }
+    }
+    // 添加刷新方法
+    pub fn refresh(&mut self) {
+        let init_time = Local::now();
+        let example = load_items_from_json("assets/json/items.json");
+
+        // 重新计算所有项目
+        let items: Vec<Item> = example
+            .iter()
+            .map(|item: &Item| {
+                let target_datetime =
+                    parse_datetime_from_str(&item.dead_time).unwrap_or_else(|| Local::now());
+                let duration = target_datetime - init_time;
+
+                Item {
+                    id: item.id,
+                    name: item.name.clone(),
+                    title: item.title.clone(),
+                    dead_time: item.dead_time.clone(),
+                    status: item.status.clone(),
+                    duration,
+                }
+            })
+            .collect();
+
+        // 更新资源
+        self.init_time = init_time;
+        self.items = items;
     }
 }
 
@@ -174,7 +296,7 @@ fn setup_camera_system(mut commands: Commands) {
 
 fn ui_example_system(
     mut contexts: EguiContexts,
-    app_state: Res<AppState>,
+    mut app_state: ResMut<AppState>,
     mut filter_state: ResMut<FilterState>,
     mut tabs: ResMut<SimpleTabs>,
 ) {
@@ -183,6 +305,8 @@ fn ui_example_system(
         Ok(ctx) => ctx,
         Err(_) => return,
     };
+
+    // setup_chinese_font(ctx);
 
     // 也不是非要使用window
     // egui::Window::new("TestWindow").show(ctx, |ui| {
@@ -211,76 +335,11 @@ fn ui_example_system(
     egui::CentralPanel::default().show(ctx, |ui| {
         change_tab_content(ui, app_state, filter_state, tabs.current_tab);
     });
-
-    // // 增加排序
-    // let mut sorted_items = app_state.items.clone();
-    // // sorted_items.sort_by_key(|item| item.duration);
-    // sorted_items.sort_by(|a, b| a.duration.cmp(&b.duration));
-
-    // egui::CentralPanel::default().show(ctx, |ui| match tabs.current_tab {
-    //     0 => {
-    //         let mut available_names: Vec<&str> =
-    //             sorted_items.iter().map(|item| item.name.as_str()).collect();
-
-    //         available_names.sort();
-    //         available_names.dedup();
-
-    //         let mut filter_options = vec!["All"];
-    //         filter_options.extend(available_names);
-
-    //         egui::ComboBox::from_id_salt("name_filter")
-    //             .selected_text(&filter_state.selected_name)
-    //             .show_ui(ui, |ui| {
-    //                 for &name in &filter_options {
-    //                     ui.selectable_value(
-    //                         &mut filter_state.selected_name,
-    //                         name.to_string(),
-    //                         name,
-    //                     );
-    //                 }
-    //             });
-
-    //         // 循环内容
-    //         for item in sorted_items.iter() {
-    //             if filter_state.selected_name == "All" || item.name == filter_state.selected_name {
-    //                 ui.horizontal(|ui| {
-    //                     ui.label(&item.name);
-    //                     ui.label(&item.title);
-    //                     // ui.label(&item.dead_time);
-    //                     ui.label(value_in_status(&item.status));
-    //                     // 使用预先计算好的持续时间
-    //                     let formatted_duration = format_duration(item.duration);
-    //                     ui.label(formatted_duration);
-    //                 });
-    //             }
-    //         }
-
-    //         ui.separator();
-    //         ui.label(format!(
-    //             "init: {}",
-    //             app_state.init_time.format("%Y-%m-%d %H:%M:%S")
-    //         ));
-
-    //         ui.label(format!(
-    //             "current: {}",
-    //             Local::now().format("%Y-%m-%d %H:%M:%S")
-    //         ));
-    //     }
-    //     1 => {
-    //         ui.label("tab2 content");
-    //     }
-    //     2 => {
-    //         ui.label("tab3 content");
-    //     }
-    //     _ => {
-    //         ui.label("other content");
-    //     }
-    // });
 }
 
 fn change_tab_content(
     ui: &mut egui::Ui,
-    app_state: Res<AppState>,
+    mut app_state: ResMut<AppState>,
     mut filter_state: ResMut<FilterState>,
     current_tab: usize,
 ) {
@@ -320,27 +379,41 @@ fn change_tab_content(
             && new_state == current_tab + 1
         {
             ui.horizontal(|ui| {
-                ui.label(&item.name);
-                ui.label(&item.title);
-                // ui.label(&item.dead_time);
-                ui.label(value_in_status(&new_state));
-                // 使用预先计算好的持续时间
-                let formatted_duration = format_duration(item.duration);
-                ui.label(formatted_duration);
+                // ui.label(&item.name);
+                // ui.label(&item.title);
+                // // ui.label(&item.dead_time);
+                // ui.label(value_in_status(&new_state));
+                // // 使用预先计算好的持续时间
+                // let formatted_duration = format_duration(item.duration);
+                // ui.label(formatted_duration);
+
+                add_item(ui, &item.name);
+                add_item(ui, &item.title);
+                add_item(ui, &dur);
             });
         }
     }
     // 常规部分不知道放在哪里
     ui.separator();
     ui.label(format!(
-        "init: {}",
+        "初始化时间: {}",
         app_state.init_time.format("%Y-%m-%d %H:%M:%S")
     ));
 
     ui.label(format!(
-        "current: {}",
+        "当前时间: {}",
         Local::now().format("%Y-%m-%d %H:%M:%S")
     ));
+
+    if ui.button("刷新数据").clicked() {
+        println!("点击了按钮");
+        // AppState::new();
+        app_state.refresh();
+    }
+}
+
+fn add_item(ui: &mut egui::Ui, text: &String) {
+    ui.add_sized([120.0, 20.0], egui::Label::new(text));
 }
 
 fn format_duration(duration: Duration) -> String {
