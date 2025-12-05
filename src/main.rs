@@ -17,7 +17,7 @@ struct Item {
     name: String,
     title: String,
     dead_time: String,
-    status: u32,
+    status: usize,
     // duration不包含在JSON中，我们在读取后计算
     #[serde(skip_deserializing)] // 跳过JSON反序列化
     duration: Duration, // 存储计算好的持续时间
@@ -50,43 +50,14 @@ struct SimpleTabs {
     tab_names: Vec<&'static str>,
 }
 
-// fn simple_tab_ui(mut contexts: EguiContexts, mut tabs: ResMut<SimpleTabs>) {
-//     let ctx = contexts.ctx_mut().expect("REASON");
-
-//     let mut clicked_tab = None;
-
-//     egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
-//         ui.horizontal(|ui| {
-//             for (i, &name) in tabs.tab_names.iter().enumerate() {
-//                 let selected = tabs.current_tab == i;
-//                 if ui.selectable_label(selected, name).clicked() {
-//                     clicked_tab = Some(i);
-//                 }
-//             }
-//         });
-//     });
-
-//     // 在UI作用域外修改资源
-//     if let Some(tab_index) = clicked_tab {
-//         tabs.current_tab = tab_index;
-//     }
-
-//     egui::CentralPanel::default().show(ctx, |ui| match tabs.current_tab {
-//         0 => ui.label("tab1 content"),
-//         1 => ui.label("tab2 content"),
-//         2 => ui.label("tab3 content"),
-//         _ => ui.label("other content"),
-//     });
-// }
-
 fn setup_tabs(mut commands: Commands) {
     commands.insert_resource(SimpleTabs {
         current_tab: 0,
-        tab_names: vec!["tab1", "tab2", "tab3"],
+        tab_names: vec!["doing", "done", "expired"],
     });
 }
 
-fn value_in_status(status: &u32) -> &str {
+fn value_in_status(status: &usize) -> &str {
     match status {
         1 => "doing",
         2 => "done",
@@ -213,11 +184,6 @@ fn ui_example_system(
         Err(_) => return,
     };
 
-    // 增加排序
-    let mut sorted_items = app_state.items.clone();
-    // sorted_items.sort_by_key(|item| item.duration);
-    sorted_items.sort_by(|a, b| a.duration.cmp(&b.duration));
-
     // 也不是非要使用window
     // egui::Window::new("TestWindow").show(ctx, |ui| {
     // });
@@ -242,65 +208,139 @@ fn ui_example_system(
         tabs.current_tab = tab_index;
     }
 
-    egui::CentralPanel::default().show(ctx, |ui| match tabs.current_tab {
-        0 => {
-            let mut available_names: Vec<&str> =
-                sorted_items.iter().map(|item| item.name.as_str()).collect();
-
-            available_names.sort();
-            available_names.dedup();
-
-            let mut filter_options = vec!["All"];
-            filter_options.extend(available_names);
-
-            egui::ComboBox::from_id_salt("name_filter")
-                .selected_text(&filter_state.selected_name)
-                .show_ui(ui, |ui| {
-                    for &name in &filter_options {
-                        ui.selectable_value(
-                            &mut filter_state.selected_name,
-                            name.to_string(),
-                            name,
-                        );
-                    }
-                });
-
-            // 循环内容
-            for item in sorted_items.iter() {
-                if filter_state.selected_name == "All" || item.name == filter_state.selected_name {
-                    ui.horizontal(|ui| {
-                        ui.label(&item.name);
-                        ui.label(&item.title);
-                        // ui.label(&item.dead_time);
-                        ui.label(value_in_status(&item.status));
-                        // 使用预先计算好的持续时间
-                        let formatted_duration = format_duration(item.duration);
-                        ui.label(formatted_duration);
-                    });
-                }
-            }
-
-            ui.separator();
-            ui.label(format!(
-                "init: {}",
-                app_state.init_time.format("%Y-%m-%d %H:%M:%S")
-            ));
-
-            ui.label(format!(
-                "current: {}",
-                Local::now().format("%Y-%m-%d %H:%M:%S")
-            ));
-        }
-        1 => {
-            ui.label("tab2 content");
-        }
-        2 => {
-            ui.label("tab3 content");
-        }
-        _ => {
-            ui.label("other content");
-        }
+    egui::CentralPanel::default().show(ctx, |ui| {
+        change_tab_content(ui, app_state, filter_state, tabs.current_tab);
     });
+
+    // // 增加排序
+    // let mut sorted_items = app_state.items.clone();
+    // // sorted_items.sort_by_key(|item| item.duration);
+    // sorted_items.sort_by(|a, b| a.duration.cmp(&b.duration));
+
+    // egui::CentralPanel::default().show(ctx, |ui| match tabs.current_tab {
+    //     0 => {
+    //         let mut available_names: Vec<&str> =
+    //             sorted_items.iter().map(|item| item.name.as_str()).collect();
+
+    //         available_names.sort();
+    //         available_names.dedup();
+
+    //         let mut filter_options = vec!["All"];
+    //         filter_options.extend(available_names);
+
+    //         egui::ComboBox::from_id_salt("name_filter")
+    //             .selected_text(&filter_state.selected_name)
+    //             .show_ui(ui, |ui| {
+    //                 for &name in &filter_options {
+    //                     ui.selectable_value(
+    //                         &mut filter_state.selected_name,
+    //                         name.to_string(),
+    //                         name,
+    //                     );
+    //                 }
+    //             });
+
+    //         // 循环内容
+    //         for item in sorted_items.iter() {
+    //             if filter_state.selected_name == "All" || item.name == filter_state.selected_name {
+    //                 ui.horizontal(|ui| {
+    //                     ui.label(&item.name);
+    //                     ui.label(&item.title);
+    //                     // ui.label(&item.dead_time);
+    //                     ui.label(value_in_status(&item.status));
+    //                     // 使用预先计算好的持续时间
+    //                     let formatted_duration = format_duration(item.duration);
+    //                     ui.label(formatted_duration);
+    //                 });
+    //             }
+    //         }
+
+    //         ui.separator();
+    //         ui.label(format!(
+    //             "init: {}",
+    //             app_state.init_time.format("%Y-%m-%d %H:%M:%S")
+    //         ));
+
+    //         ui.label(format!(
+    //             "current: {}",
+    //             Local::now().format("%Y-%m-%d %H:%M:%S")
+    //         ));
+    //     }
+    //     1 => {
+    //         ui.label("tab2 content");
+    //     }
+    //     2 => {
+    //         ui.label("tab3 content");
+    //     }
+    //     _ => {
+    //         ui.label("other content");
+    //     }
+    // });
+}
+
+fn change_tab_content(
+    ui: &mut egui::Ui,
+    app_state: Res<AppState>,
+    mut filter_state: ResMut<FilterState>,
+    current_tab: usize,
+) {
+    // ui.label(current_tab.to_string());
+
+    // 增加排序
+    let mut sorted_items = app_state.items.clone();
+    // sorted_items.sort_by_key(|item| item.duration);
+    sorted_items.sort_by(|a, b| a.duration.cmp(&b.duration));
+
+    let mut available_names: Vec<&str> =
+        sorted_items.iter().map(|item| item.name.as_str()).collect();
+
+    available_names.sort();
+    available_names.dedup();
+
+    let mut filter_options = vec!["All"];
+    filter_options.extend(available_names);
+
+    egui::ComboBox::from_id_salt("name_filter")
+        .selected_text(&filter_state.selected_name)
+        .show_ui(ui, |ui| {
+            for &name in &filter_options {
+                ui.selectable_value(&mut filter_state.selected_name, name.to_string(), name);
+            }
+        });
+
+    // 循环内容
+    for item in sorted_items.iter() {
+        let mut dur = format_duration(item.duration);
+        let mut new_state = item.status;
+        if dur == "expired" {
+            new_state = 3;
+        }
+
+        if (filter_state.selected_name == "All" || item.name == filter_state.selected_name)
+            && new_state == current_tab + 1
+        {
+            ui.horizontal(|ui| {
+                ui.label(&item.name);
+                ui.label(&item.title);
+                // ui.label(&item.dead_time);
+                ui.label(value_in_status(&new_state));
+                // 使用预先计算好的持续时间
+                let formatted_duration = format_duration(item.duration);
+                ui.label(formatted_duration);
+            });
+        }
+    }
+    // 常规部分不知道放在哪里
+    ui.separator();
+    ui.label(format!(
+        "init: {}",
+        app_state.init_time.format("%Y-%m-%d %H:%M:%S")
+    ));
+
+    ui.label(format!(
+        "current: {}",
+        Local::now().format("%Y-%m-%d %H:%M:%S")
+    ));
 }
 
 fn format_duration(duration: Duration) -> String {
