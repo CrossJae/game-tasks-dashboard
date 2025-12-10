@@ -1,5 +1,5 @@
 [package]
-name = "game-tasks-dashboard"
+name = "rust-bevy-egui"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,3 +12,15 @@ egui = "0.33.2"
 # serde自动验证JSON结构
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+
+[profile.dev]
+opt-level = 1 # 提升dev模式的优化级别
+debug = true
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "thin"      # 链接时优化
+codegen-units = 1 # 减少代码生成单元以提高优化
