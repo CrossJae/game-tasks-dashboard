@@ -1,7 +1,12 @@
+use bevy::diagnostic::{
+    FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin, SystemInformationDiagnosticsPlugin,
+};
 use bevy::prelude::*;
 use bevy::window::{WindowLevel, WindowResolution};
+use bevy::winit::WinitSettings;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDateTime, TimeZone};
+// use core::time::Duration;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
@@ -74,6 +79,13 @@ fn value_in_status(status: &usize) -> &str {
 
 fn main() {
     App::new()
+        .insert_resource(WinitSettings::desktop_app())
+        // .insert_resource(WinitSettings {
+        //     focused_mode: bevy::winit::UpdateMode::Continuous,
+        //     unfocused_mode: bevy::winit::UpdateMode::reactive_low_power(
+        //         core::time::Duration::from_millis(10),
+        //     ),
+        // })
         .add_plugins(
             (DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -81,13 +93,25 @@ fn main() {
                     // decorations: false,
                     resolution: WindowResolution::new(375, 500), // 设置窗口大小为 400x400
                     // window_level: WindowLevel::AlwaysOnTop,
-                    // #[cfg(target_os = "macos")]
-                    // composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
+                    #[cfg(target_os = "macos")]
+                    composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
+                    present_mode: bevy::window::PresentMode::AutoVsync, // 这是关键修复
+                    // Turn off vsync to maximize CPU/GPU usage
+                    // cpu飙升到300了
+                    // present_mode: bevy::window::PresentMode::AutoNoVsync,
                     ..default()
                 }),
                 ..default()
             })),
         )
+        // 添加帧时间诊断 (用于计算FPS)
+        // 添加系统信息诊断 (包含内存和CPU使用率)
+        // 添加日志输出插件，让数据在控制台显示
+        .add_plugins((
+            FrameTimeDiagnosticsPlugin::default(),
+            SystemInformationDiagnosticsPlugin::default(),
+            LogDiagnosticsPlugin::default(),
+        ))
         .add_plugins(EguiPlugin::default())
         .insert_resource(AppState::new())
         .insert_resource(FilterState::new())
@@ -306,6 +330,18 @@ fn ui_example_system(
         Err(_) => return,
     };
 
+    // ctx.set_pixels_per_point(1.0);
+
+    // TEST CODE
+    // egui::CentralPanel::default().show(ctx, |ui| {
+    //     ui.label("hello world");
+    //     ui.label(format!(
+    //         "当前时间: {}",
+    //         Local::now().format("%Y-%m-%d %H:%M:%S")
+    //     ));
+    // });
+
+    // NOUSE
     // setup_chinese_font(ctx);
 
     // 也不是非要使用window
@@ -333,6 +369,7 @@ fn ui_example_system(
     }
 
     egui::CentralPanel::default().show(ctx, |ui| {
+        // ui.label("hello world");
         change_tab_content(ui, app_state, filter_state, tabs.current_tab);
     });
 }
@@ -368,7 +405,8 @@ fn change_tab_content(
         });
 
     // 循环内容
-    for item in sorted_items.iter() {
+    // for item in sorted_items.iter() {
+    for (index, item) in sorted_items.iter().enumerate() {
         let mut dur = format_duration(item.duration);
         let mut new_state = item.status;
         if dur == "expired" {
@@ -378,19 +416,29 @@ fn change_tab_content(
         if (filter_state.selected_name == "All" || item.name == filter_state.selected_name)
             && new_state == current_tab + 1
         {
-            ui.horizontal(|ui| {
-                // ui.label(&item.name);
-                // ui.label(&item.title);
-                // // ui.label(&item.dead_time);
-                // ui.label(value_in_status(&new_state));
-                // // 使用预先计算好的持续时间
-                // let formatted_duration = format_duration(item.duration);
-                // ui.label(formatted_duration);
+            // 使用 Frame 创建带背景色的水平布局区域
+            let bg_color = if index % 2 == 0 {
+                egui::Color32::from_hex("#333333").unwrap()
+            } else {
+                egui::Color32::TRANSPARENT
+            };
 
-                add_item(ui, &item.name);
-                add_item(ui, &item.title);
-                add_item(ui, &dur);
-            });
+            // 直接向 ui 添加 Frame
+            egui::Frame::default()
+                .fill(bg_color)
+                // .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        add_item(ui, &item.name);
+                        add_item(ui, &item.title);
+                        add_item(ui, &dur);
+                        if ui.button("完成").clicked() {
+                            // 1.获取id把对应的status改成对应的值
+                            // 2.刷新列表
+                            // app_state.refresh();
+                        }
+                    });
+                });
         }
     }
     // 常规部分不知道放在哪里
@@ -400,14 +448,13 @@ fn change_tab_content(
         app_state.init_time.format("%Y-%m-%d %H:%M:%S")
     ));
 
-    ui.label(format!(
-        "当前时间: {}",
-        Local::now().format("%Y-%m-%d %H:%M:%S")
-    ));
+    // ui.label(format!(
+    //     "当前时间: {}",
+    //     Local::now().format("%Y-%m-%d %H:%M:%S")
+    // ));
 
     if ui.button("刷新数据").clicked() {
         println!("点击了按钮");
-        // AppState::new();
         app_state.refresh();
     }
 }
