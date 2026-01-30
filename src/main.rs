@@ -8,6 +8,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDateTime, TimeZone};
 use egui::{Color32, RichText};
 // use core::time::Duration;
+use egui::text::LayoutJob;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::fs;
@@ -470,46 +471,70 @@ fn change_tab_content(
         });
 
     // 表头
-    ui.horizontal(|ui| {
-        add_item(ui, &String::from("游戏名称"));
-        add_item(ui, &String::from("活动名称"));
-        add_item(ui, &String::from("剩余时间"));
-        add_item(ui, &String::from("操作"));
-    });
-    // 循环内容
-    // for item in sorted_items.iter() {
-    for (index, item) in sorted_items.iter().enumerate() {
-        let dur = format_duration(item.duration);
-        let mut new_state = item.status;
-        if dur == "expired" && item.status == ItemStatus::DOING {
-            new_state = ItemStatus::EXPIRED;
-        }
+    // ui.horizontal(|ui| {
+    //     add_item(ui, &String::from("游戏名称"));
+    //     add_item(ui, &String::from("活动名称"));
+    //     add_item(ui, &String::from("剩余时间"));
+    //     add_item(ui, &String::from("操作"));
+    // });
+    egui::Grid::new("my_grid_header")
+        // 隔行区分-背景颜色
+        .striped(true)
+        .min_col_width(120.0)
+        .max_col_width(120.0)
+        .min_row_height(36.0)
+        .show(ui, |ui| {
+            ui.label(&String::from("游戏名称"));
+            ui.label(&String::from("活动名称"));
+            ui.label(&String::from("剩余时间"));
+            ui.label(&String::from("操作"));
+        });
 
-        // println!("new_state: {}", ItemStatus::to_usize(&new_state));
+    egui::Grid::new("my_grid")
+        // 隔行区分-背景颜色
+        .striped(true)
+        .min_col_width(120.0)
+        .max_col_width(120.0)
+        .min_row_height(36.0)
+        .show(ui, |ui| {
+            let current_filtered_items: Vec<Item> = sorted_items
+                .iter()
+                .filter(|item| {
+                    // TODO 这部分重复，需要优化
+                    let dur = format_duration(item.duration);
+                    let mut new_state = item.status;
+                    if dur == "expired" && item.status == ItemStatus::DOING {
+                        new_state = ItemStatus::EXPIRED;
+                    }
+                    (filter_state.selected_name == "All" || item.name == filter_state.selected_name)
+                        && ItemStatus::to_usize(&new_state) == current_tab + 1
+                })
+                .cloned()
+                .collect();
 
-        if (filter_state.selected_name == "All" || item.name == filter_state.selected_name)
-        // && new_state == current_tab + 1
-        && ItemStatus::to_usize(&new_state) == current_tab + 1
-        {
-            // 使用 Frame 创建带背景色的水平布局区域
-            let bg_color = if index % 2 == 0 {
-                egui::Color32::from_hex("#333333").unwrap()
-            } else {
-                egui::Color32::TRANSPARENT
-            };
-
-            // 直接向 ui 添加 Frame
-            egui::Frame::default()
-                // .fill(bg_color)
-                // .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        add_item(ui, &item.name);
-                        add_item(ui, &item.title);
-
+            for row in current_filtered_items.iter().enumerate() {
+                let (index, item) = row;
+                let dur = format_duration(item.duration);
+                let mut new_state = item.status;
+                if dur == "expired" && item.status == ItemStatus::DOING {
+                    new_state = ItemStatus::EXPIRED;
+                }
+                // for row in 0..3 {
+                for col in 0..4 {
+                    if col == 0 {
+                        // ui.label(format!("row {index}"));
+                        ui.label(&item.name);
+                    } else if col == 1 {
+                        ui.label(&item.title);
+                    } else if col == 2 {
+                        if new_state == ItemStatus::DOING {
+                            ui.label(&dur);
+                        } else {
+                            ui.label(&item.dead_time);
+                        }
+                    } else {
                         match new_state {
                             ItemStatus::DOING => {
-                                add_item(ui, &dur);
                                 if ui.button("完成").clicked() {
                                     // 1.获取id把对应的status改成对应的值
                                     // 2.刷新列表
@@ -518,11 +543,15 @@ fn change_tab_content(
                             }
 
                             ItemStatus::DONE => {
-                                add_item(ui, &item.dead_time);
+                                if ui.button("恢复").clicked() {
+                                    // 1.获取id把对应的status改成对应的值
+                                    // 2.刷新列表
+                                    // 不需要判断状态，赋值DOING时会触发重新filter
+                                    app_state.update(item.id, ItemStatus::DOING)
+                                }
                             }
 
                             ItemStatus::EXPIRED => {
-                                add_item(ui, &item.dead_time);
                                 if ui.button("完成").clicked() {
                                     // 1.获取id把对应的status改成对应的值
                                     // 2.刷新列表
@@ -530,10 +559,12 @@ fn change_tab_content(
                                 }
                             }
                         }
-                    });
-                });
-        }
-    }
+                    }
+                }
+                ui.end_row();
+                // }
+            }
+        });
     // 常规部分不知道放在哪里
     // ui.separator();
     // ui.label(format!(
@@ -555,7 +586,22 @@ fn change_tab_content(
 
 fn add_item(ui: &mut egui::Ui, text: &String) {
     // ui.add_sized([120.0, 20.0], egui::Label::new(text));
-    ComplexText::new(text, [120.0, 20.0]).show(ui);
+    // ComplexText::new(text, [120.0, 20.0]).show(ui);
+    let mut job = LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            ..Default::default()
+        },
+    );
+    let overflow_character = Some('…');
+    job.wrap = egui::text::TextWrapping {
+        max_rows: 1,
+        max_width: 2.0,
+        break_anywhere: true,
+        overflow_character,
+        ..Default::default()
+    };
+    ui.label(job);
 }
 
 // ——————————————————————————————————
