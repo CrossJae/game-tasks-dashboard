@@ -6,7 +6,7 @@ use bevy::window::{WindowLevel, WindowResolution};
 use bevy::winit::WinitSettings;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDateTime, TimeZone};
-use egui::{Color32, RichText};
+use egui::{Color32, Id, Modal, RichText, modal};
 // use core::time::Duration;
 use egui::text::LayoutJob;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -99,6 +99,22 @@ impl AppState {
 
             save_items_to_json("assets/json/items_game.json", self);
         }
+    }
+    pub fn add(&mut self, new_item: &Item) {
+        let id = 30;
+
+        let target_datetime =
+            parse_datetime_from_str(&new_item.dead_time).unwrap_or_else(|| Local::now());
+        let duration = target_datetime - self.init_time;
+        self.items.push(Item {
+            id,
+            name: new_item.name.clone(),
+            title: new_item.title.clone(),
+            dead_time: new_item.dead_time.clone(),
+            status: ItemStatus::DOING,
+            duration,
+        });
+        save_items_to_json("assets/json/items_game.json", self);
     }
 }
 
@@ -245,6 +261,28 @@ impl ComplexText {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(default))]
+#[derive(Resource)]
+pub struct ModalState {
+    should_add: bool,
+    add_new_task_modal_open: bool,
+    name: String,
+    title: String,
+    dead_time: String,
+}
+
+impl Default for ModalState {
+    fn default() -> Self {
+        Self {
+            should_add: false,
+            add_new_task_modal_open: false,
+            name: String::from(""),
+            title: String::from(""),
+            dead_time: String::from(""),
+        }
+    }
+}
 // ——————————————————————————————————
 // 主要功能
 // ——————————————————————————————————
@@ -287,6 +325,7 @@ fn main() {
         .insert_resource(AppState::new())
         .insert_resource(FilterState::new())
         .insert_resource(TabState::new())
+        .insert_resource(ModalState::default())
         .add_systems(Startup, setup_camera_system)
         .add_systems(Update, setup_chinese_font)
         .add_systems(EguiPrimaryContextPass, task_operate_system)
@@ -385,6 +424,7 @@ fn task_operate_system(
     mut contexts: EguiContexts,
     mut app_state: ResMut<AppState>,
     mut filter_state: ResMut<FilterState>,
+    mut modal_state: ResMut<ModalState>,
     mut tabs: ResMut<TabState>,
 ) {
     // 处理 Result，如果出错则直接返回
@@ -433,7 +473,71 @@ fn task_operate_system(
 
     egui::CentralPanel::default().show(ctx, |ui| {
         // ui.label("hello world");
-        change_tab_content(ui, app_state, filter_state, tabs.current_tab);
+        change_tab_content(ui, &mut app_state, filter_state, tabs.current_tab);
+
+        ui.separator();
+
+        // let mut add_new_task = true;
+
+        if ui.button("新增").clicked() {
+            modal_state.add_new_task_modal_open = true;
+        }
+
+        let mut app_state_inner = app_state.into_inner();
+        if modal_state.add_new_task_modal_open {
+            let current_name = modal_state.name.clone();
+            let current_title = modal_state.title.clone();
+            let current_dead_time = modal_state.dead_time.clone();
+            let modal = Modal::new(Id::new("Modal A")).show(ui.ctx(), |ui| {
+                ui.set_width(250.0);
+                // ui.heading("新增任务");
+                // ui.separator();
+                // ui.label(&modal_state.name);
+                // ui.label(&modal_state.title);
+
+                // 游戏名称、活动标题、结束时间
+                ui.add(egui::TextEdit::singleline(&mut modal_state.name).hint_text("游戏名称"));
+                ui.add(egui::TextEdit::singleline(&mut modal_state.title).hint_text("活动名称"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut modal_state.dead_time).hint_text("结束时间"),
+                );
+                // ui.add(egui_extras::DatePickerButton::new(Local::now()));
+                ui.separator();
+
+                egui::Sides::new().show(
+                    ui,
+                    |_ui| {},
+                    |ui| {
+                        if ui.button("保存").clicked() {
+                            // *save_modal_open = true;
+                            // app_state.add(modal_state);
+                            modal_state.should_add = true;
+                        }
+                        if ui.button("取消").clicked() {
+                            // You can call `ui.close()` to close the modal.
+                            // (This causes the current modals `should_close` to return true)
+                            ui.close();
+                        }
+                    },
+                );
+            });
+
+            if modal_state.should_add {
+                app_state_inner.add(&Item {
+                    id: 30,
+                    name: current_name,
+                    title: current_title,
+                    dead_time: current_dead_time,
+                    status: ItemStatus::DOING,
+                    duration: Duration::zero(),
+                });
+                modal_state.should_add = false;
+            }
+
+            if modal.should_close() {
+                modal_state.add_new_task_modal_open = false;
+            }
+        }
     });
 }
 
@@ -442,7 +546,7 @@ fn task_operate_system(
  */
 fn change_tab_content(
     ui: &mut egui::Ui,
-    mut app_state: ResMut<AppState>,
+    app_state: &mut AppState,
     mut filter_state: ResMut<FilterState>,
     current_tab: usize,
 ) {
