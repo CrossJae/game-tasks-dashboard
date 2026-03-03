@@ -24,6 +24,7 @@ struct AppState {
     init_time: DateTime<Local>,
     items: Vec<Item>, // 存储所有项目
     dirty: bool,      // 标记数据是否被修改
+    max_id: u32,
 }
 
 impl AppState {
@@ -31,7 +32,9 @@ impl AppState {
         let init_time = Local::now();
 
         // 读取本地json
-        let example = load_items_from_json("assets/json/items_game.json");
+        let example: Vec<Item> = load_items_from_json("assets/json/items_game.json");
+
+        let mut max_id = 1;
 
         // 解析每个项目的 dead_time 并计算持续时间
         let items: Vec<Item> = example
@@ -43,6 +46,11 @@ impl AppState {
 
                 // 计算持续时间（相对于应用启动时间）
                 let duration = target_datetime - init_time;
+
+                // 找到最大的id，之后递增，最简单的创建id的方式
+                if item.id > max_id {
+                    max_id = item.id;
+                }
 
                 // 创建新的 Item 实例，包含计算好的持续时间
                 Item {
@@ -60,6 +68,7 @@ impl AppState {
             init_time,
             items,
             dirty: false,
+            max_id,
         }
     }
     // 添加刷新方法
@@ -100,21 +109,49 @@ impl AppState {
             save_items_to_json("assets/json/items_game.json", self);
         }
     }
-    pub fn add(&mut self, new_item: &Item) {
-        let id = 30;
+    pub fn add(&mut self, modal_state: &ModalState) {
+        let id = self.max_id + 1;
+
+        self.max_id = id;
 
         let target_datetime =
-            parse_datetime_from_str(&new_item.dead_time).unwrap_or_else(|| Local::now());
+            parse_datetime_from_str(&modal_state.dead_time).unwrap_or_else(|| Local::now());
         let duration = target_datetime - self.init_time;
         self.items.push(Item {
             id,
-            name: new_item.name.clone(),
-            title: new_item.title.clone(),
-            dead_time: new_item.dead_time.clone(),
+            name: modal_state.name.clone(),
+            title: modal_state.title.clone(),
+            dead_time: modal_state.dead_time.clone(),
             status: ItemStatus::DOING,
             duration,
         });
         save_items_to_json("assets/json/items_game.json", self);
+    }
+
+    pub fn edit(&mut self, edit_modal_state: &EditModalState) -> Result<(), String> {
+        // save_items_to_json("assets/json/items_game.json", self);
+
+        println!("edit!!!! {}", edit_modal_state.id);
+
+        if let Some(item) = self
+            .items
+            .iter_mut()
+            .find(|item| item.id == edit_modal_state.id)
+        {
+            let target_datetime = parse_datetime_from_str(&edit_modal_state.dead_time)
+                .unwrap_or_else(|| Local::now());
+            // let duration = target_datetime - self.init_time;
+            item.name = edit_modal_state.name.clone();
+            item.title = edit_modal_state.title.clone();
+            item.dead_time = edit_modal_state.dead_time.clone();
+            item.duration = target_datetime - self.init_time;
+
+            save_items_to_json("assets/json/items_game.json", self);
+
+            Ok(())
+        } else {
+            Err(format!("未找到ID为 {} 的项目", edit_modal_state.id))
+        }
     }
 }
 
@@ -283,6 +320,31 @@ impl Default for ModalState {
         }
     }
 }
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(default))]
+#[derive(Resource)]
+pub struct EditModalState {
+    should_edit: bool,
+    edit_task_modal_open: bool,
+    name: String,
+    title: String,
+    dead_time: String,
+    id: u32,
+}
+
+impl Default for EditModalState {
+    fn default() -> Self {
+        Self {
+            should_edit: false,
+            edit_task_modal_open: false,
+            name: String::from(""),
+            title: String::from(""),
+            dead_time: String::from(""),
+            id: 1,
+        }
+    }
+}
 // ——————————————————————————————————
 // 主要功能
 // ——————————————————————————————————
@@ -300,7 +362,7 @@ fn main() {
                 primary_window: Some(Window {
                     // transparent: true,
                     // decorations: false,
-                    resolution: WindowResolution::new(375, 500), // 设置窗口大小为 400x400
+                    resolution: WindowResolution::new(500, 600), // 设置窗口大小为 400x400
                     // window_level: WindowLevel::AlwaysOnTop,
                     #[cfg(target_os = "macos")]
                     composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
@@ -326,6 +388,7 @@ fn main() {
         .insert_resource(FilterState::new())
         .insert_resource(TabState::new())
         .insert_resource(ModalState::default())
+        .insert_resource(EditModalState::default())
         .add_systems(Startup, setup_camera_system)
         .add_systems(Update, setup_chinese_font)
         .add_systems(EguiPrimaryContextPass, task_operate_system)
@@ -425,6 +488,7 @@ fn task_operate_system(
     mut app_state: ResMut<AppState>,
     mut filter_state: ResMut<FilterState>,
     mut modal_state: ResMut<ModalState>,
+    mut edit_modal_state: ResMut<EditModalState>,
     mut tabs: ResMut<TabState>,
 ) {
     // 处理 Result，如果出错则直接返回
@@ -473,7 +537,14 @@ fn task_operate_system(
 
     egui::CentralPanel::default().show(ctx, |ui| {
         // ui.label("hello world");
-        change_tab_content(ui, &mut app_state, filter_state, tabs.current_tab);
+        change_tab_content(
+            ui,
+            // app_state.reborrow(),
+            &mut *app_state,
+            filter_state,
+            tabs.current_tab,
+            edit_modal_state,
+        );
 
         ui.separator();
 
@@ -511,6 +582,13 @@ fn task_operate_system(
                         if ui.button("保存").clicked() {
                             // *save_modal_open = true;
                             // app_state.add(modal_state);
+                            // TODO 优先级低
+                            // if modal_state.name != "" {
+                            //   modal_state.should_add = true;
+                            // } else {
+
+                            // }
+
                             modal_state.should_add = true;
                         }
                         if ui.button("取消").clicked() {
@@ -518,19 +596,19 @@ fn task_operate_system(
                             // (This causes the current modals `should_close` to return true)
                             ui.close();
                         }
+
+                        if ui.button("清空").clicked() {
+                            // reset
+                            modal_state.name = String::from("");
+                            modal_state.title = String::from("");
+                            modal_state.dead_time = String::from("");
+                        }
                     },
                 );
             });
 
             if modal_state.should_add {
-                app_state_inner.add(&Item {
-                    id: 30,
-                    name: current_name,
-                    title: current_title,
-                    dead_time: current_dead_time,
-                    status: ItemStatus::DOING,
-                    duration: Duration::zero(),
-                });
+                app_state_inner.add(&modal_state);
                 modal_state.should_add = false;
             }
 
@@ -549,6 +627,7 @@ fn change_tab_content(
     app_state: &mut AppState,
     mut filter_state: ResMut<FilterState>,
     current_tab: usize,
+    mut edit_modal_state: ResMut<EditModalState>,
 ) {
     // ui.label(current_tab.to_string());
 
@@ -644,6 +723,14 @@ fn change_tab_content(
                                     // 2.刷新列表
                                     app_state.update(item.id, ItemStatus::DONE)
                                 }
+
+                                if ui.button("修改").clicked() {
+                                    edit_modal_state.edit_task_modal_open = true;
+                                    edit_modal_state.name = item.name.clone();
+                                    edit_modal_state.title = item.title.clone();
+                                    edit_modal_state.dead_time = item.dead_time.clone();
+                                    edit_modal_state.id = item.id.clone();
+                                }
                             }
 
                             ItemStatus::DONE => {
@@ -685,6 +772,63 @@ fn change_tab_content(
     if ui.button("刷新数据").clicked() {
         // println!("点击了按钮");
         app_state.refresh();
+    }
+
+    // TODO 和上面新建任务重复的代码
+    // let mut app_state_inner = app_state.into_inner();
+    if edit_modal_state.edit_task_modal_open {
+        let modal = Modal::new(Id::new("Modal B")).show(ui.ctx(), |ui| {
+            ui.set_width(250.0);
+
+            ui.heading("修改任务");
+            ui.separator();
+
+            ui.add(egui::TextEdit::singleline(&mut edit_modal_state.name).hint_text("游戏名称"));
+            ui.add(egui::TextEdit::singleline(&mut edit_modal_state.title).hint_text("活动名称"));
+            ui.add(
+                egui::TextEdit::singleline(&mut edit_modal_state.dead_time).hint_text("结束时间"),
+            );
+            // ui.add(egui_extras::DatePickerButton::new(Local::now()));
+            ui.separator();
+
+            egui::Sides::new().show(
+                ui,
+                |_ui| {},
+                |ui| {
+                    if ui.button("保存").clicked() {
+                        // *save_modal_open = true;
+                        // app_state.add(modal_state);
+                        // TODO 优先级低
+                        // if modal_state.name != "" {
+                        //   modal_state.should_add = true;
+                        // } else {
+
+                        // }
+
+                        edit_modal_state.should_edit = true;
+                    }
+
+                    if ui.button("取消").clicked() {
+                        // You can call `ui.close()` to close the modal.
+                        // (This causes the current modals `should_close` to return true)
+                        ui.close();
+                    }
+                },
+            );
+        });
+
+        if edit_modal_state.should_edit {
+            if let Ok(()) = app_state.edit(&edit_modal_state) {
+                edit_modal_state.should_edit = false;
+                edit_modal_state.edit_task_modal_open = false;
+            } else {
+                println!("修改失败！");
+            };
+        }
+
+        if modal.should_close() {
+            edit_modal_state.edit_task_modal_open = false;
+        }
     }
 }
 
